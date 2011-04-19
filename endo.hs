@@ -3,14 +3,15 @@ import qualified Data.Map as Map
 import Data.Maybe
 
 data Base = I | C | F | P
-  deriving (Eq, Show)
+  deriving (Eq, Show, Read)
 
-data PItem = PItemBase Base | PItemSkip Integer | PItemQuery DNA | PItemLParen | PItemRParen | PItemRNA DNA
+data PItem = PItemBase Base | PItemSkip Integer | PItemQuery DNA | PItemLParen | PItemRParen | PItemRNA RNA
   deriving (Show)
-data TItem = TItemBase Base | TItemRef Integer Integer | TItemLength Integer | TItemFinish | TItemRNA DNA
+data TItem = TItemBase Base | TItemRef Integer Integer | TItemLength Integer | TItemFinish | TItemRNA RNA
   deriving (Show)
 
 type DNA = Seq.Seq Base
+type RNA = Seq.Seq Base
 
 mapFst f (a, b) = (f a, b)
 --mapFstOfJust f v = maybe Nothing (Just (mapFst f)) v
@@ -55,13 +56,14 @@ pitem dna = case Seq.viewl dna of
                              otherwise -> Nothing
           otherwise -> Nothing
 
-pattern :: DNA -> Maybe ([PItem], DNA)
-pattern = (mapFstOfJust reverse) .  pattern' [] 0
-  where pattern' pat lvl dna = case pitem dna of
-                                Just (PItemLParen, rest) -> pattern' (PItemLParen:pat) (lvl+1) rest
-                                Just (PItemRParen, rest) -> if lvl > 0 then pattern' (PItemRParen:pat) (lvl-1) rest else Just (pat, rest)
-                                Nothing                  -> Nothing
-                                Just (item, rest)        -> pattern' (item:pat) lvl rest
+pattern :: DNA -> ([RNA], Maybe ([PItem], DNA))
+pattern = pattern' [] [] 0
+  where pattern' rna pat lvl dna = case pitem dna of
+                                    Just (PItemLParen, rest) -> pattern' rna (PItemLParen:pat) (lvl+1) rest
+                                    Just (PItemRParen, rest) -> if lvl > 0 then pattern' rna (PItemRParen:pat) (lvl-1) rest else (reverse rna, Just (reverse pat, rest))
+                                    Just (PItemRNA r, rest)  -> pattern' (r:rna) pat lvl rest
+                                    Nothing                  -> (reverse rna, Nothing)
+                                    Just (item, rest)        -> pattern' rna (item:pat) lvl rest
 
 
 titem :: DNA -> Maybe (TItem, DNA)
@@ -86,12 +88,13 @@ titem dna = case Seq.viewl dna of
                            (n2, r') <- nat r
                            return $ (TItemRef n n2, r')
 
-template :: DNA -> Maybe ([TItem], DNA)
-template = (mapFstOfJust reverse) . template' []
-  where template' tem dna = case titem dna of
-                              Just (TItemFinish, dna') -> Just (tem, dna')
-                              Just (item, dna')        -> template' (item:tem) dna'
-                              Nothing                  -> Nothing
+template :: DNA -> ([RNA], Maybe ([TItem], DNA))
+template = template' [] []
+  where template' rna tem dna = case titem dna of
+                                  Just (TItemFinish, dna')  -> (reverse rna, Just (reverse tem, dna'))
+                                  Just (TItemRNA r, dna')   -> template' (r:rna) tem dna'
+                                  Just (item, dna')         -> template' rna (item:tem) dna'
+                                  Nothing                   -> (reverse rna, Nothing)
 
 match :: DNA -> [PItem] -> Maybe ([DNA], DNA)
 match dna = match' [] 0 [] dna
@@ -139,8 +142,10 @@ replace dna titems env = foldr (Seq.><) dna (map applyTitem titems)
         applyTitem (TItemLength n) = asnat $ Seq.length $ lookupEnv n
 
 executeIteration :: DNA -> Maybe DNA
-executeIteration dna = do (p, rest) <- pattern dna
-                          (t, rest') <- template rest
+executeIteration dna = do let (pRNA, pat) = pattern dna
+                          (p, rest) <- pat
+                          let (tRNA, tem) = template rest
+                          (t, rest') <- tem
                           (env, rest'') <- match rest' p
                           return (replace rest'' t env)
 
@@ -151,4 +156,6 @@ sample1 = executeIteration $ sample1data -- should be PICFC
 sample2 = executeIteration $ sample2data -- should be PIICFCFFPC
 sample3 = executeIteration $ sample3data -- should be I
 
-
+main :: IO ()
+main = do contents <- readFile "endo.dna"
+          print (toDna $ take (length contents - 1) contents)
