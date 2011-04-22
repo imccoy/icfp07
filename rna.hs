@@ -1,7 +1,201 @@
-module Rna (drawRna) where
+module Rna (drawRna, Bitmap) where
 
 import Endo
 import Control.Concurrent.Chan
+import Data.Array
+
+type Coord = Int
+type Pos = (Coord, Coord)
+
+type Component = Int
+type RGB = (Component, Component, Component)
+type Transparency = Component
+type Pixel = (RGB, Transparency)
+
+type Bitmap = Array Coord (Array Coord Pixel)
+
+data Color = Col_RGB RGB | Col_Transparency Transparency
+type Bucket = [Color]
+
+data Dir = N | E | S | W
+
+black    = (0,   0,   0  )
+red      = (255, 0,   0  )
+green    = (0,   255, 0  )
+yellow   = (255, 255, 0  )
+blue     = (0,   0,   255)
+magenta  = (255, 0,   255)
+cyan     = (0,   255, 255)
+white    = (255, 255, 255)
+
+transparent = 0
+opaque      = 255
+
+type DrawState = (Bucket, Pos, Pos, Dir, [Bitmap])
+getBucket  (b, _, _, _, _) = b
+getPos     (_, p, _, _, _) = p
+getMark    (_, _, m, _, _) = m
+getDir     (_, _, _, d, _) = d
+getBitmaps (_, _, _, _, b) = b
+
+adjustBucket  f (b, x, x1, x2, x3) = (f b, x,   x1,  x2,  x3)
+adjustPos     f (x, p, x1, x2, x3) = (x,   f p, x1,  x2,  x3)
+adjustMark    f (x, x1, m, x2, x3) = (x,   x1,  f m, x2,  x3)
+adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
+adjustBitmaps :: ([Bitmap] -> [Bitmap]) -> DrawState -> DrawState
+adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
+
+transparentBitmap = array (0, 600) $ zip [0..600] (repeat transparentRow)
+  where transparentPixel = (black, transparent)
+        transparentRow =   array (0, 600)  $ zip [0..600] (repeat transparentPixel)
+
+initialDrawState :: DrawState
+initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap])
+
+addColor :: Color -> Bucket -> Bucket
+addColor = (:)
+
+currentPixel :: Bucket -> Pixel
+currentPixel bucket = ((r * a `div` 255, g * a `div` 255, b * a `div` 255), a)
+                      where addUp bucket = addUp' ((0,(0,0,0)),(0,0)) bucket
+                            addUp' ((n,(r,g,b)),trans) ((Col_RGB (r',g',b')):bucket) = addUp' ((n+1,(r+r',g+g',b+b')),trans)   bucket
+                            addUp' (cols,       (n,a)) ((Col_Transparency a'):bucket) = addUp' (cols,                  (n+1,a+a')) bucket
+                            addUp' (cols, trans)       []                            = (cols, trans)
+                            ((ncol,(rs, gs, bs)), (nt,as)) = addUp bucket
+                            avg 0 0 d = d
+                            avg s n d = s `div` n
+                            r = avg rs ncol 0
+                            g = avg gs ncol 0
+                            b = avg bs ncol 0
+                            a = avg as nt 255
+
+currentPixel2 :: Bucket -> Pixel
+currentPixel2 bucket = ((alph (avg rs 0), alph (avg gs 0), alph (avg bs 0)), avg trans 255)
+                       where (cols, trans) = splitBucket [] [] bucket
+                             splitBucket cols trans ((Col_RGB rgb):bucket) = splitBucket (rgb:cols) trans bucket
+                             splitBucket cols trans ((Col_Transparency t):bucket) = splitBucket cols (t:trans) bucket
+                             splitBucket cols trans [] = (cols, trans)
+                             rs = map (\(r,_,_) -> r) cols
+                             gs = map (\(_,g,_) -> g) cols
+                             bs = map (\(_,_,b) -> b) cols
+                             avg [] d = d
+                             avg x  d = (sum x) `div` (length x)
+                             alph c = c * (avg trans 255) `div` 255
+
+exampleBucket1 = [Col_Transparency transparent, Col_Transparency opaque, Col_Transparency opaque]
+exampleBucket2 = [Col_RGB blue, Col_RGB yellow, Col_RGB cyan]
+exampleBucket3 = [Col_RGB yellow, Col_Transparency transparent, Col_Transparency opaque]
+                             
+
+adjust (d1, d2) (x1, x2) = ((x1 + d1) `mod` 600 , (x2 + d2) `mod` 600)
+
+move :: Dir -> Pos -> Pos
+move E = adjust (1,  0)
+move S = adjust (0,  1)
+move W = adjust (-1, 0)
+move N = adjust (0, -1)
+
+turnCounterClockwise N = W
+turnCounterClockwise E = N
+turnCounterClockwise S = E
+turnCounterClockwise W = S
+
+turnClockwise N = E
+turnClockwise E = S
+turnClockwise S = W
+turnClockwise W = N
+
+adjustTop :: (Bitmap -> Bitmap) -> [Bitmap] -> [Bitmap]
+adjustTop f (x:xs) = (f x):xs
+
+line :: Pixel -> Pos -> Pos -> Bitmap -> Bitmap
+line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
+                                 deltay = y1 - y0
+                                 d = max (abs deltax) (abs deltay)
+                                 c = if deltax * deltay <= 0 then 1 else 0
+                                 x = x0 * d + ((d - c) `div` 2)
+                                 y = y0 * d + ((d - c) `div` 2)
+                                 xs = iterate ((+) deltax) x
+                                 ys = iterate ((+) deltay) y
+                              in setPixel p (x1,y1) $ foldr (setPixel p) b (zip xs ys)
+
+drawLine :: DrawState -> (Bitmap -> Bitmap)
+drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
+
+fill (x,y) initial current bitmap
+  | getPixel (x,y) bitmap  == initial = (setPixel current (x,y)) . recurseLeft . recurseRight . recurseUp $ recurseDown bitmap
+  | otherwise                         = bitmap
+                                        where recurse (xd, yd)
+                                                 | x <= 0    = id
+                                                 | x >= 599  = id
+                                                 | y <= 0    = id
+                                                 | y >= 599  = id
+                                                 | otherwise = fill (x + xd, y + yd) initial current
+                                              recurseLeft = recurse (-1, 0)
+                                              recurseRight = recurse (1, 0)
+                                              recurseUp = recurse (0, -1)
+                                              recurseDown = recurse (0,1)
+
+drawFill :: DrawState -> Bitmap -> Bitmap
+drawFill ds bitmap = let new = currentPixel $ getBucket ds
+                         old = getPixel (getPos ds) bitmap
+                      in if new == old then fill (getPos ds) old new bitmap else bitmap
+
+setPixel :: Pixel -> Pos -> Bitmap -> Bitmap
+setPixel pixel (x,y) bitmap  = let row = bitmap ! x
+                                   newRow = row // [(y,pixel)]
+                                in bitmap // [(x,newRow)]
+
+getPixel :: Pos -> Bitmap -> Pixel
+getPixel (x, y) bitmap = (bitmap ! x) ! y
+
+addBitmap bitmaps = transparentBitmap:bitmaps
+
+allPos = zip [0..599] [0..599]
+
+compose (bm0:bm1:bitmaps) = (compose' bm0 bm1):bitmaps
+  where compose' bm0 bm1 = foldr composePixel bm1 allPos
+        composePixel :: Pos -> Bitmap -> Bitmap
+        composePixel pos bm1 = let ((r0, g0, b0), a0) = getPixel pos bm0
+                                   ((r1, g1, b1), a1) = getPixel pos bm1
+                                   combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
+                                   pix = ((combine r0 r1, combine g0 g1, combine b0 b1), combine a0 a1)
+                                in setPixel pix pos bm1
+compose bitmaps = bitmaps
+
+
+clip (bm0:bm1:bitmaps) = (clip' bm0 bm1):bitmaps
+  where clip' bm0 bm1 = foldr clipPixel bm1 allPos
+        clipPixel pos bm1 = let ((r0, g0, b0), a0) = getPixel pos bm0
+                                ((r1, g1, b1), a1) = getPixel pos bm1
+                                fade c = c * a0 `div` 255
+                                pix = ((fade r1, fade g1, fade b1), fade a1)
+                             in setPixel pix pos bm1
+
+applyRNA ::  [Base] -> DrawState -> DrawState
+applyRNA [P,I,P,I,I,I,C] = adjustBucket (addColor $ Col_RGB black)
+applyRNA [P,I,P,I,I,I,P] = adjustBucket (addColor $ Col_RGB red)
+applyRNA [P,I,P,I,I,C,C] = adjustBucket (addColor $ Col_RGB green)
+applyRNA [P,I,P,I,I,C,F] = adjustBucket (addColor $ Col_RGB yellow)
+applyRNA [P,I,P,I,I,C,P] = adjustBucket (addColor $ Col_RGB blue)
+applyRNA [P,I,P,I,I,F,C] = adjustBucket (addColor $ Col_RGB magenta)
+applyRNA [P,I,P,I,I,F,F] = adjustBucket (addColor $ Col_RGB cyan)
+applyRNA [P,I,P,I,I,P,C] = adjustBucket (addColor $ Col_RGB white)
+applyRNA [P,I,P,I,I,P,F] = adjustBucket (addColor $ Col_Transparency transparent)
+applyRNA [P,I,P,I,I,P,P] = adjustBucket (addColor $ Col_Transparency opaque)
+applyRNA [P,I,I,P,I,C,P] = adjustBucket (\_ -> [])
+
+applyRNA [P,I,I,I,I,I,P] = (\ds -> adjustPos (move $ getDir ds) ds)
+applyRNA [P,C,C,C,C,C,P] = adjustDir turnCounterClockwise
+applyRNA [P,F,F,F,F,F,P] = adjustDir turnCounterClockwise
+
+applyRNA [P,C,C,I,F,F,P] = (\ds -> adjustMark (\_ -> getPos ds) ds)
+applyRNA [P,F,F,I,C,C,P] = (\ds -> adjustBitmaps (adjustTop $ drawLine ds) ds)
+applyRNA [P,I,I,P,I,I,P] = (\ds -> adjustBitmaps (adjustTop $ drawFill ds) ds)
+
+applyRNA [P,C,C,P,F,F,P] = adjustBitmaps addBitmap
+applyRNA [P,F,F,P,C,C,P] = adjustBitmaps compose
+applyRNA [P,F,F,I,C,C,F] = adjustBitmaps clip
 
 drawRna :: Chan RNA -> IO ()
 drawRna rnapipe = do rna <- readChan rnapipe
