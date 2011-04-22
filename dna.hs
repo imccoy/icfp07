@@ -4,6 +4,7 @@ import Endo
 import qualified Data.Sequence as Seq
 import qualified Data.Map as Map
 import Control.Concurrent.Chan
+import Control.Concurrent (killThread, myThreadId)
 import Data.Maybe
 import System.Exit
 
@@ -142,18 +143,18 @@ replace dna titems env = foldr (Seq.><) dna (map applyTitem titems)
         applyTitem (TItemRef l n) = protect l $ lookupEnv n
         applyTitem (TItemLength n) = asnat $ Seq.length $ lookupEnv n
 
-stopIfFailed :: Maybe a -> IO a
-stopIfFailed Nothing  = do exitWith ExitSuccess
-stopIfFailed (Just x) = do return x
+stopIfFailed :: Chan (Maybe RNA) -> (Maybe a) -> IO a
+stopIfFailed chan Nothing  = do writeChan chan Nothing
+                                myThreadId >>= killThread
+                                undefined
+stopIfFailed chan (Just x) = do return x
 
-printRnaAndStopIfFailed :: Chan RNA -> ([RNA], Maybe a) -> IO a
-printRnaAndStopIfFailed chan (rna, r) = do writeList2Chan chan rna
-                                           stopIfFailed r
+printRnaAndStopIfFailed chan (rna, r) = do writeList2Chan chan (map Just rna)
+                                           stopIfFailed chan r
 
-executeIteration :: Chan RNA -> DNA -> IO DNA
 executeIteration rnapipe dna = do (p, rest) <- printRnaAndStopIfFailed rnapipe $ pattern dna
                                   (t, rest') <- printRnaAndStopIfFailed rnapipe $ template rest
-                                  (env, rest'') <- stopIfFailed $ match rest' p
+                                  (env, rest'') <- stopIfFailed rnapipe $ match rest' p
                                   return (replace rest'' t env)
 
 sample1data = Seq.fromList [I,I,P,I,P,I,C,P,I,I,C,I,C,I,I,F,I,C,C,I,F,P,P,I,I,C,C,F,P,C] 
@@ -163,7 +164,7 @@ sample3data = Seq.fromList [I,I,P,I,P,I,I,C,P,I,I,C,I,I,C,C,I,I,C,F,C,F,C]
 -- sample2 = executeIteration $ sample2data -- should be PIICFCFFPC
 -- sample3 = executeIteration $ sample3data -- should be I
 
-execute :: Chan RNA -> DNA -> IO ()
+execute :: Chan (Maybe RNA) -> DNA -> IO ()
 execute rnapipe dna = do dna' <- executeIteration rnapipe dna
                          execute rnapipe dna'
 

@@ -3,6 +3,7 @@ module Rna (drawRna, Bitmap) where
 import Endo
 import Control.Concurrent.Chan
 import Data.Array
+import Data.Foldable (toList)
 
 type Coord = Int
 type Pos = (Coord, Coord)
@@ -15,9 +16,11 @@ type Pixel = (RGB, Transparency)
 type Bitmap = Array Coord (Array Coord Pixel)
 
 data Color = Col_RGB RGB | Col_Transparency Transparency
+  deriving (Show)
 type Bucket = [Color]
 
 data Dir = N | E | S | W
+  deriving (Show)
 
 black    = (0,   0,   0  )
 red      = (255, 0,   0  )
@@ -197,7 +200,15 @@ applyRNA [P,C,C,P,F,F,P] = adjustBitmaps addBitmap
 applyRNA [P,F,F,P,C,C,P] = adjustBitmaps compose
 applyRNA [P,F,F,I,C,C,F] = adjustBitmaps clip
 
-drawRna :: Chan RNA -> IO ()
-drawRna rnapipe = do rna <- readChan rnapipe
-                     putStrLn $ show rna
-                     drawRna rnapipe
+drawRna :: Chan (Maybe RNA) -> IO ()
+drawRna rnapipe = do let ds = initialDrawState
+                     drawRna' ds rnapipe
+
+drawRna' ds rnapipe = do rnaMsg <- readChan rnapipe
+                         case rnaMsg of
+                           Just rna ->
+                             drawRna' (applyRNA (toList rna) ds) rnapipe
+                           Nothing -> 
+                             render ds
+
+render ds = do putStrLn $ show ds
