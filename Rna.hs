@@ -4,6 +4,8 @@ import Endo
 import Control.Concurrent.Chan
 import Data.Array
 import Data.Foldable (toList)
+import Data.List (foldl')
+import System.Exit
 
 type Coord = Int
 type Pos = (Coord, Coord)
@@ -48,12 +50,14 @@ adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
 adjustBitmaps :: ([Bitmap] -> [Bitmap]) -> DrawState -> DrawState
 adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
 
-transparentBitmap = array (0, 600) $ zip [0..600] (repeat transparentRow)
+size = 600
+
+transparentBitmap n = array (0, n-1) $ zip [0..n-1] (repeat transparentRow)
   where transparentPixel = (black, transparent)
-        transparentRow =   array (0, 600)  $ zip [0..600] (repeat transparentPixel)
+        transparentRow =   array (0, n-1)  $ zip [0..n-1] (repeat transparentPixel)
 
 initialDrawState :: DrawState
-initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap])
+initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap size])
 
 addColor :: Color -> Bucket -> Bucket
 addColor = (:)
@@ -90,7 +94,7 @@ exampleBucket2 = [Col_RGB blue, Col_RGB yellow, Col_RGB cyan]
 exampleBucket3 = [Col_RGB yellow, Col_Transparency transparent, Col_Transparency opaque]
                              
 
-adjust (d1, d2) (x1, x2) = ((x1 + d1) `mod` 600 , (x2 + d2) `mod` 600)
+adjust (d1, d2) (x1, x2) = ((x1 + d1) `mod` size, (x2 + d2) `mod` size) 
 
 move :: Dir -> Pos -> Pos
 move E = adjust (1,  0)
@@ -120,20 +124,20 @@ line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
                                  y = y0 * d + ((d - c) `div` 2)
                                  xs = iterate ((+) deltax) x
                                  ys = iterate ((+) deltay) y
-                              in setPixel p (x1,y1) $ foldr (setPixel p) b (zip xs ys)
+                              in setPixel p (x1,y1) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) b $ take d (zip xs ys)
 
 drawLine :: DrawState -> (Bitmap -> Bitmap)
 drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
+sizeFromArray bitmap = snd (bounds bitmap)
+
 fill (x,y) initial current bitmap
-  | getPixel (x,y) bitmap  == initial = (setPixel current (x,y)) . recurseLeft . recurseRight . recurseUp $ recurseDown bitmap
+  | getPixel (x,y) bitmap  == initial = recurseLeft . recurseRight . recurseUp . recurseDown $ (setPixel current (x,y)) bitmap
   | otherwise                         = bitmap
-                                        where recurse (xd, yd)
-                                                 | x <= 0    = id
-                                                 | x >= 599  = id
-                                                 | y <= 0    = id
-                                                 | y >= 599  = id
-                                                 | otherwise = fill (x + xd, y + yd) initial current
+                                        where maxval = sizeFromArray bitmap
+                                              recurse (xd, yd)
+                                                 | x + xd >= 0 && x + xd <= maxval && y + yd >= 0 && y + yd <= maxval = fill (x + xd, y + yd) initial current
+                                                 | otherwise                                                          = id
                                               recurseLeft = recurse (-1, 0)
                                               recurseRight = recurse (1, 0)
                                               recurseUp = recurse (0, -1)
@@ -152,14 +156,13 @@ setPixel pixel (x,y) bitmap  = let row = bitmap ! x
 getPixel :: Pos -> Bitmap -> Pixel
 getPixel (x, y) bitmap = (bitmap ! x) ! y
 
-addBitmap bitmaps = transparentBitmap:bitmaps
+addBitmap bitmaps = (transparentBitmap size):bitmaps
 
-allPos = zip [0..599] [0..599]
+allPos s = zip [0..s] [0..s]
 
 compose (bm0:bm1:bitmaps) = (compose' bm0 bm1):bitmaps
-  where compose' bm0 bm1 = foldr composePixel bm1 allPos
-        composePixel :: Pos -> Bitmap -> Bitmap
-        composePixel pos bm1 = let ((r0, g0, b0), a0) = getPixel pos bm0
+  where compose' bm0 bm1 = foldl' composePixel bm1 (allPos (sizeFromArray bm1))
+        composePixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
                                    ((r1, g1, b1), a1) = getPixel pos bm1
                                    combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
                                    pix = ((combine r0 r1, combine g0 g1, combine b0 b1), combine a0 a1)
@@ -168,8 +171,8 @@ compose bitmaps = bitmaps
 
 
 clip (bm0:bm1:bitmaps) = (clip' bm0 bm1):bitmaps
-  where clip' bm0 bm1 = foldr clipPixel bm1 allPos
-        clipPixel pos bm1 = let ((r0, g0, b0), a0) = getPixel pos bm0
+  where clip' bm0 bm1 = foldl' clipPixel bm1 (allPos (sizeFromArray bm1))
+        clipPixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
                                 ((r1, g1, b1), a1) = getPixel pos bm1
                                 fade c = c * a0 `div` 255
                                 pix = ((fade r1, fade g1, fade b1), fade a1)
@@ -202,13 +205,20 @@ applyRNA [P,F,F,I,C,C,F] = adjustBitmaps clip
 
 drawRna :: Chan (Maybe RNA) -> IO ()
 drawRna rnapipe = do let ds = initialDrawState
-                     drawRna' ds rnapipe
+                     drawRna' rnapipe ds
 
-drawRna' ds rnapipe = do rnaMsg <- readChan rnapipe
+drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
                          case rnaMsg of
                            Just rna ->
-                             drawRna' (applyRNA (toList rna) ds) rnapipe
+                             drawRna' rnapipe $! applyRNA (toList rna) ds
                            Nothing -> 
-                             render ds
+                             do render ds
+
+
+-- drawRna' ds rnapipe = do rnaMsg <- readChan rnapipe
+--                          putStrLn $ show rnaMsg
+--                          drawRna' ds rnapipe
+-- 
 
 render ds = do putStrLn $ show ds
+               exitWith ExitSuccess
