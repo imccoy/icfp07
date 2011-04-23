@@ -146,10 +146,12 @@ fill (x,y) initial current bitmap
                                               recurseUp = recurse (0, -1)
                                               recurseDown = recurse (0,1)
 
+tryFill position initial current
+  | initial /= current = fill position initial current
+  | otherwise          = id
+
 drawFill :: DrawState -> Bitmap -> Bitmap
-drawFill ds bitmap = let new = currentPixel $ getBucket ds
-                         old = getPixel (getPos ds) bitmap
-                      in if new == old then fill (getPos ds) old new bitmap else bitmap
+drawFill ds = tryFill (getPos ds) (getPixel (getPos ds) (head $ getBitmaps ds)) (currentPixel $ getBucket ds)
 
 setPixel :: Pixel -> Pos -> Bitmap -> Bitmap
 setPixel pixel (x,y) bitmap  = let row = bitmap ! x
