@@ -7,6 +7,9 @@ import Data.Foldable (toList)
 import Data.List (foldl')
 import System.Exit
 
+import qualified Graphics.UI.WX as Wx
+import Graphics.UI.WX.Attributes (Prop ((:=)))
+
 type Coord = Int
 type Pos = (Coord, Coord)
 
@@ -50,14 +53,14 @@ adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
 adjustBitmaps :: ([Bitmap] -> [Bitmap]) -> DrawState -> DrawState
 adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
 
-size = 600
+canvasSize = 600
 
 transparentBitmap n = array (0, n-1) $ zip [0..n-1] (repeat transparentRow)
   where transparentPixel = (black, transparent)
         transparentRow =   array (0, n-1)  $ zip [0..n-1] (repeat transparentPixel)
 
 initialDrawState :: DrawState
-initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap size])
+initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap canvasSize])
 
 addColor :: Color -> Bucket -> Bucket
 addColor = (:)
@@ -94,7 +97,7 @@ exampleBucket2 = [Col_RGB blue, Col_RGB yellow, Col_RGB cyan]
 exampleBucket3 = [Col_RGB yellow, Col_Transparency transparent, Col_Transparency opaque]
                              
 
-adjust (d1, d2) (x1, x2) = ((x1 + d1) `mod` size, (x2 + d2) `mod` size) 
+adjust (d1, d2) (x1, x2) = ((x1 + d1) `mod` canvasSize, (x2 + d2) `mod` canvasSize) 
 
 move :: Dir -> Pos -> Pos
 move E = adjust (1,  0)
@@ -129,12 +132,12 @@ line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
 drawLine :: DrawState -> (Bitmap -> Bitmap)
 drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
-sizeFromArray bitmap = snd (bounds bitmap)
+canvasSizeFromArray bitmap = snd (bounds bitmap)
 
 fill (x,y) initial current bitmap
   | getPixel (x,y) bitmap  == initial = recurseLeft . recurseRight . recurseUp . recurseDown $ (setPixel current (x,y)) bitmap
   | otherwise                         = bitmap
-                                        where maxval = sizeFromArray bitmap
+                                        where maxval = canvasSizeFromArray bitmap
                                               recurse (xd, yd)
                                                  | x + xd >= 0 && x + xd <= maxval && y + yd >= 0 && y + yd <= maxval = fill (x + xd, y + yd) initial current
                                                  | otherwise                                                          = id
@@ -156,12 +159,12 @@ setPixel pixel (x,y) bitmap  = let row = bitmap ! x
 getPixel :: Pos -> Bitmap -> Pixel
 getPixel (x, y) bitmap = (bitmap ! x) ! y
 
-addBitmap bitmaps = (transparentBitmap size):bitmaps
+addBitmap bitmaps = (transparentBitmap canvasSize):bitmaps
 
 allPos s = zip [0..s] [0..s]
 
 compose (bm0:bm1:bitmaps) = (compose' bm0 bm1):bitmaps
-  where compose' bm0 bm1 = foldl' composePixel bm1 (allPos (sizeFromArray bm1))
+  where compose' bm0 bm1 = foldl' composePixel bm1 (allPos (canvasSizeFromArray bm1))
         composePixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
                                    ((r1, g1, b1), a1) = getPixel pos bm1
                                    combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
@@ -171,7 +174,7 @@ compose bitmaps = bitmaps
 
 
 clip (bm0:bm1:bitmaps) = (clip' bm0 bm1):bitmaps
-  where clip' bm0 bm1 = foldl' clipPixel bm1 (allPos (sizeFromArray bm1))
+  where clip' bm0 bm1 = foldl' clipPixel bm1 (allPos (canvasSizeFromArray bm1))
         clipPixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
                                 ((r1, g1, b1), a1) = getPixel pos bm1
                                 fade c = c * a0 `div` 255
@@ -214,11 +217,18 @@ drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
                            Nothing -> 
                              do render ds
 
+paintBitmap bitmap dc viewArea = mapM_ paintRow (assocs bitmap)
+  where paintPixel (r,g,b) x y = do Wx.set dc [Wx.penColor := Wx.colorRGB r g b]
+                                    Wx.drawPoint dc (Wx.pt x y) []
+        paintRow (y, row_array) = mapM_ (\(x, (rgb,a)) -> paintPixel rgb x y) (assocs row_array) 
+
+makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
+                       p <- Wx.panel f [Wx.on Wx.paint := paintBitmap bitmap]
+                       Wx.set f [Wx.layout := Wx.minsize (Wx.sz canvasSize canvasSize) $ Wx.widget p]
 
 -- drawRna' ds rnapipe = do rnaMsg <- readChan rnapipe
 --                          putStrLn $ show rnaMsg
 --                          drawRna' ds rnapipe
 -- 
 
-render ds = do putStrLn $ show ds
-               exitWith ExitSuccess
+render ds = do Wx.start $ makeWindow (head $ getBitmaps ds)
