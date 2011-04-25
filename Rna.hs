@@ -6,6 +6,7 @@ import Data.Array
 import Data.Foldable (toList)
 import Data.List (foldl')
 import System.Exit
+import  Debug.Trace
 
 import qualified Graphics.UI.WX as Wx
 import Graphics.UI.WX.Attributes (Prop ((:=)))
@@ -52,6 +53,8 @@ adjustMark    f (x, x1, m, x2, x3) = (x,   x1,  f m, x2,  x3)
 adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
 adjustBitmaps :: ([Bitmap] -> [Bitmap]) -> DrawState -> DrawState
 adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
+
+strictDrawState ds@(a,b,c,d,e) = (seq ds a, seq ds b, seq ds c, seq ds d, seq ds e)
 
 canvasSize = 600
 
@@ -198,7 +201,7 @@ applyRNA [P,I,I,P,I,C,P] = adjustBucket (\_ -> [])
 
 applyRNA [P,I,I,I,I,I,P] = (\ds -> adjustPos (move $ getDir ds) ds)
 applyRNA [P,C,C,C,C,C,P] = adjustDir turnCounterClockwise
-applyRNA [P,F,F,F,F,F,P] = adjustDir turnCounterClockwise
+applyRNA [P,F,F,F,F,F,P] = adjustDir turnClockwise
 
 applyRNA [P,C,C,I,F,F,P] = (\ds -> adjustMark (\_ -> getPos ds) ds)
 applyRNA [P,F,F,I,C,C,P] = (\ds -> adjustBitmaps (adjustTop $ drawLine ds) ds)
@@ -208,21 +211,26 @@ applyRNA [P,C,C,P,F,F,P] = adjustBitmaps addBitmap
 applyRNA [P,F,F,P,C,C,P] = adjustBitmaps compose
 applyRNA [P,F,F,I,C,C,F] = adjustBitmaps clip
 
+applyRNA _               = id
+
 drawRna :: Chan (Maybe RNA) -> IO ()
 drawRna rnapipe = do let ds = initialDrawState
                      drawRna' rnapipe ds
 
+applyRNAt rna ds = applyRNA rna ds
+
 drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
                          case rnaMsg of
                            Just rna ->
-                             drawRna' rnapipe $! applyRNA (toList rna) ds
+                             do 
+                                drawRna' rnapipe $! strictDrawState $! applyRNAt (toList rna) ds
                            Nothing -> 
                              do render ds
 
 paintBitmap bitmap dc viewArea = mapM_ paintRow (assocs bitmap)
   where paintPixel (r,g,b) x y = do Wx.set dc [Wx.penColor := Wx.colorRGB r g b]
                                     Wx.drawPoint dc (Wx.pt x y) []
-        paintRow (y, row_array) = mapM_ (\(x, (rgb,a)) -> paintPixel rgb x y) (assocs row_array) 
+        paintRow (x, row_array) = mapM_ (\(y, (rgb,a)) -> paintPixel rgb x y) (assocs row_array) 
 
 makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
                        p <- Wx.panel f [Wx.on Wx.paint := paintBitmap bitmap]
@@ -231,6 +239,9 @@ makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
 -- drawRna' ds rnapipe = do rnaMsg <- readChan rnapipe
 --                          putStrLn $ show rnaMsg
 --                          drawRna' ds rnapipe
--- 
+
+
+-- render ds = do --putStrLn $ show $ head $ getBitmaps ds
+--               exitWith ExitSuccess
 
 render ds = do Wx.start $ makeWindow (head $ getBitmaps ds)

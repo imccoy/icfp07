@@ -5,7 +5,7 @@ import Dna
 import Rna
 
 main :: IO ()
-main = do contents <- readFile "endo.dna"
+main = do contents <- readFile "/Users/iain/icfp/icfp2007/endo.dna"
           let dna = toDna contents
           rnapipe <- newChan
           forkIO $ execute rnapipe dna
