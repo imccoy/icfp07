@@ -104,19 +104,17 @@ template = template' []
 match :: DNA -> [PItem] -> Maybe ([DNA], DNA)
 match dna = match' [] 0 [] dna
   where match' ixs i env dna' ((PItemBase base):pat) = case Seq.viewl dna' of
-                                                         base' Seq.:< rest -> if base == base' then match't ixs (seq 0 $ i+1) env rest pat else Nothing
+                                                         base' Seq.:< rest -> if base == base' then match' ixs (seq 0 $ i+1) env rest pat else Nothing
                                                          otherwise         -> Nothing
         match' ixs i env dna' ((PItemSkip n):pat)    = if (fromInteger $ i + n) <= (Seq.length dna) 
-                                                       then match't ixs (i + n) env (Seq.drop (fromInteger n) dna') pat
+                                                       then match' ixs (i + n) env (Seq.drop (fromInteger n) dna') pat
                                                        else Nothing
         match' ixs i env dna' ((PItemQuery s):pat)   = case indexOfEnd s dna' of
-                                                         Just n  -> match't ixs ((fromIntegral n) + i) env (Seq.drop n dna') pat
+                                                         Just n  -> match' ixs ((fromIntegral n) + i) env (Seq.drop n dna') pat
                                                          Nothing -> Nothing
-        match' ixs i env dna' (PItemLParen:pat)      = match't (i:ixs) i env dna' pat
-        match' (c0:ixs) i env dna' (PItemRParen:pat) = match't ixs i ((Seq.take (seq 0 $ fromInteger $ i - c0) $ Seq.drop (seq 0 $ fromInteger c0) dna):env) dna' pat
+        match' ixs i env dna' (PItemLParen:pat)      = match' (i:ixs) i env dna' pat
+        match' (c0:ixs) i env dna' (PItemRParen:pat) = match' ixs i ((Seq.take (seq 0 $ fromInteger $ i - c0) $ Seq.drop (seq 0 $ fromInteger c0) dna):env) dna' pat
         match' ixs i env dna' []                     = Just (reverse env, dna')
-        match't ixs i env dna (pitem:pitems) = trace (show pitem) $ match' ixs i env dna (pitem:pitems)
-        match't ixs i env dna [] = trace "done" $ match' ixs i env dna []
 
 indexOfEnd q dna = maybe Nothing (\x -> Just (x + q_len)) (indexOfStart q dna 0)
   where q_len = Seq.length q
@@ -184,14 +182,14 @@ iterstats_env :: [DNA] -> String
 iterstats_env env = unlines $ map (\(i, d) -> statrow ("env " ++ (show i)) d) $ zip [1..] env
 
 matchreplace pitems titems dna = case match dna pitems of
-                                   Just (env, rest) -> trace (iterstats_env env) $ replace rest titems env
-                                   Nothing          -> trace "failed match" $ dna
+                                   Just (env, rest) -> replace rest titems env
+                                   Nothing          -> dna
 
 executeIteration rnapipe dna = do 
                                   (p, rest) <- printRnaAndStopIfFailed rnapipe $ pattern dna
                                   (t, rest') <- printRnaAndStopIfFailed rnapipe $ template rest
                                   let rest'' = matchreplace p t rest'
-                                  return $ trace (iterstats dna p t) rest''
+                                  return rest''
 
 sample1data = Seq.fromList [I,I,P,I,P,I,C,P,I,I,C,I,C,I,I,F,I,C,C,I,F,P,P,I,I,C,C,F,P,C] 
 sample2data = Seq.fromList [I,I,P,I,P,I,C,P,I,I,C,I,C,I,I,F,I,C,C,I,F,C,C,C,P,P,I,I,C,C,F,P,C]

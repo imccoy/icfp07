@@ -47,12 +47,11 @@ getMark    (_, _, m, _, _) = m
 getDir     (_, _, _, d, _) = d
 getBitmaps (_, _, _, _, b) = b
 
-adjustBucket  f (b, x, x1, x2, x3) = (f b, x,   x1,  x2,  x3)
-adjustPos     f (x, p, x1, x2, x3) = (x,   f p, x1,  x2,  x3)
-adjustMark    f (x, x1, m, x2, x3) = (x,   x1,  f m, x2,  x3)
-adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
-adjustBitmaps :: ([Bitmap] -> [Bitmap]) -> DrawState -> DrawState
-adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
+adjustBucket  f (b, x, x1, x2, x3) = trace "adjustBucket"     (f b, x,   x1,  x2,  x3)
+adjustPos     f (x, p, x1, x2, x3) = trace "adjustPos"        (x,   f p, x1,  x2,  x3)
+adjustMark    f (x, x1, m, x2, x3) = trace "adjustMark"       (x,   x1,  f m, x2,  x3)
+adjustDir     f (x, x1, x2, d, x3) = trace "adjustDir"        (x,   x1,  x2,  f d, x3)
+adjustBitmaps f (x, x1, x2, x3, b) = trace "adjustBitmaps"    (x,   x1,  x2,  x3, f b)
 
 strictDrawState ds@(a,b,c,d,e) = (seq ds a, seq ds b, seq ds c, seq ds d, seq ds e)
 
@@ -66,7 +65,7 @@ initialDrawState :: DrawState
 initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap canvasSize])
 
 addColor :: Color -> Bucket -> Bucket
-addColor = (:)
+addColor = trace "adding color" (:)
 
 currentPixel :: Bucket -> Pixel
 currentPixel bucket = ((r * a `div` 255, g * a `div` 255, b * a `div` 255), a)
@@ -130,31 +129,47 @@ line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
                                  y = y0 * d + ((d - c) `div` 2)
                                  xs = iterate ((+) deltax) x
                                  ys = iterate ((+) deltay) y
-                              in setPixel p (x1,y1) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) b $ take d (zip xs ys)
+                              in trace "lining" $ setPixel p (x1,y1) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) b $ take d (zip xs ys)
 
 drawLine :: DrawState -> (Bitmap -> Bitmap)
 drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
 canvasSizeFromArray bitmap = snd (bounds bitmap)
 
-fill (x,y) initial current bitmap
-  | getPixel (x,y) bitmap  == initial = recurseLeft . recurseRight . recurseUp . recurseDown $ (setPixel current (x,y)) bitmap
-  | otherwise                         = bitmap
-                                        where maxval = canvasSizeFromArray bitmap
-                                              recurse (xd, yd)
-                                                 | x + xd >= 0 && x + xd <= maxval && y + yd >= 0 && y + yd <= maxval = fill (x + xd, y + yd) initial current
-                                                 | otherwise                                                          = id
-                                              recurseLeft = recurse (-1, 0)
-                                              recurseRight = recurse (1, 0)
-                                              recurseUp = recurse (0, -1)
-                                              recurseDown = recurse (0,1)
+fill (x,y) initial current bitmap = fill' [(x,y)] initial current bitmap
+  where fill' [] initial current bitmap = bitmap
+        fill' ((x,y):coords) initial current bitmap
+           | getPixel (x,y) bitmap == initial  = let drawnBitmap = setPixel current (x,y) bitmap
+                                                     newCoords = addCoord (x+1,y) $ addCoord (x-1,y) $ addCoord (x,y+1) $ addCoord (x,y-1) $ coords
+                                                  in fill' newCoords initial current drawnBitmap
+           | otherwise                         = bitmap
+        addCoord (-1,_) coords = coords
+        addCoord (_,-1) coords = coords
+        addCoord (600,_) coords = coords
+        addCoord (_,600) coords = coords
+        addCoord pos coords = pos:coords
 
+
+
+--   | getPixel (x,y) bitmap  == initial = recurseLeft $ recurseRight $ recurseUp $ recurseDown $ (setPixel current (x,y)) bitmap
+--   | otherwise                         = bitmap
+--                                         where maxval = canvasSizeFromArray bitmap
+--                                               recurse (xd, yd)
+--                                                  | x + xd >= 0 && x + xd <= maxval && y + yd >= 0 && y + yd <= maxval = fill (x + xd, y + yd) initial current
+--                                                  | otherwise                                                          = id
+--                                               recurseLeft = recurse (-1, 0)
+--                                               recurseRight = recurse (1, 0)
+--                                               recurseUp = recurse (0, -1)
+--                                               recurseDown = recurse (0,1)
+-- 
 tryFill position initial current
-  | initial /= current = fill position initial current
+  | initial /= current = trace ("filling" ++ (show initial) ++ (show current)) $ fill position initial current
   | otherwise          = id
 
 drawFill :: DrawState -> Bitmap -> Bitmap
-drawFill ds = tryFill (getPos ds) (getPixel (getPos ds) (head $ getBitmaps ds)) (currentPixel $ getBucket ds)
+drawFill ds = tryFill (getPos ds) old new 
+  where old = getPixel (getPos ds) (head $ getBitmaps ds)
+        new = currentPixel $ getBucket ds
 
 setPixel :: Pixel -> Pos -> Bitmap -> Bitmap
 setPixel pixel (x,y) bitmap  = let row = bitmap ! x
@@ -164,12 +179,14 @@ setPixel pixel (x,y) bitmap  = let row = bitmap ! x
 getPixel :: Pos -> Bitmap -> Pixel
 getPixel (x, y) bitmap = (bitmap ! x) ! y
 
+
+addBitmap bitmaps@(a1:a2:a3:a4:a5:a6:a7:a8:a9:a10:[]) = bitmaps
 addBitmap bitmaps = (transparentBitmap canvasSize):bitmaps
 
 allPos s = zip [0..s] [0..s]
 
 compose (bm0:bm1:bitmaps) = (compose' bm0 bm1):bitmaps
-  where compose' bm0 bm1 = foldl' composePixel bm1 (allPos (canvasSizeFromArray bm1))
+  where compose' bm0 bm1 = trace "composing" $ foldl' composePixel bm1 (allPos (canvasSizeFromArray bm1))
         composePixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
                                    ((r1, g1, b1), a1) = getPixel pos bm1
                                    combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
@@ -179,7 +196,7 @@ compose bitmaps = bitmaps
 
 
 clip (bm0:bm1:bitmaps) = (clip' bm0 bm1):bitmaps
-  where clip' bm0 bm1 = foldl' clipPixel bm1 (allPos (canvasSizeFromArray bm1))
+  where clip' bm0 bm1 = trace "clipping" $ foldl' clipPixel bm1 (allPos (canvasSizeFromArray bm1))
         clipPixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
                                 ((r1, g1, b1), a1) = getPixel pos bm1
                                 fade c = c * a0 `div` 255
@@ -200,8 +217,8 @@ applyRNA [P,I,P,I,I,P,P] = adjustBucket (addColor $ Col_Transparency opaque)
 applyRNA [P,I,I,P,I,C,P] = adjustBucket (\_ -> [])
 
 applyRNA [P,I,I,I,I,I,P] = (\ds -> adjustPos (move $ getDir ds) ds)
-applyRNA [P,C,C,C,C,C,P] = adjustDir turnCounterClockwise
-applyRNA [P,F,F,F,F,F,P] = adjustDir turnClockwise
+applyRNA [P,C,C,C,C,C,P] = adjustDir $ trace "turning counterclockwise" turnCounterClockwise
+applyRNA [P,F,F,F,F,F,P] = adjustDir $ trace "turning clockwise" turnClockwise
 
 applyRNA [P,C,C,I,F,F,P] = (\ds -> adjustMark (\_ -> getPos ds) ds)
 applyRNA [P,F,F,I,C,C,P] = (\ds -> adjustBitmaps (adjustTop $ drawLine ds) ds)
@@ -217,7 +234,7 @@ drawRna :: Chan (Maybe RNA) -> IO ()
 drawRna rnapipe = do let ds = initialDrawState
                      drawRna' rnapipe ds
 
-applyRNAt rna ds = applyRNA rna ds
+applyRNAt rna ds = trace ("applying " ++ show rna) $ applyRNA rna $! strictDrawState ds
 
 drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
                          case rnaMsg of
