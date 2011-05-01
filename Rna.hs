@@ -163,20 +163,20 @@ drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
 canvasSizeFromArray bitmap = snd (bounds bitmap)
 
-fill (x,y) initial current bitmap = setAll current (adjacentWithInitial (x,y) = fill' (addCoord (x,y) bitmap Set.empty) initial current bitmap
-  where 
-        fill' coords initial current bitmap 
-            | Set.null coords     =  bitmap
-            | otherwise           =  let  (pos,restCoords) = Set.deleteFindMin coords
-                                      in if getPixel pos bitmap == initial then fillFrom pos restCoords initial current bitmap else bitmap
-        fillFrom (x,y) coords initial current bitmap = let drawnBitmap = setPixel current (x,y) bitmap
-                                                           newCoords = addCoord (x+1,y) drawnBitmap $ addCoord (x-1,y) drawnBitmap $ addCoord (x,y+1) drawnBitmap $ addCoord (x,y-1) drawnBitmap $ coords
-                                                        in fill' newCoords initial current drawnBitmap
-        addCoord (-1,_) _ coords = coords
-        addCoord (_,-1) _ coords = coords
-        addCoord (600,_) _ coords = coords
-        addCoord (_,600) _ coords = coords
-        addCoord pos bitmap coords = Set.insert pos coords
+getAdjacentPositionsWithColor initial bitmap (x,y) = addCoord (x,y) Set.empty
+  where getAdjacentPositionsWithColor' (x,y) coords = addCoord (x,y+1) $! addCoord (x,y-1) $! addCoord (x+1,y) $! addCoord (x-1,y) $! coords
+        addCoord (-1,_) coords = coords
+        addCoord (_,-1) coords = coords
+        addCoord (600,_) coords = coords
+        addCoord (_,600) coords = coords
+        addCoord pos coords
+          | Set.member pos coords          = coords
+          | getPixel pos bitmap == initial = getAdjacentPositionsWithColor' pos $! Set.insert pos coords
+          | otherwise                      = coords
+
+setAll coords p bitmap = foldl' (\b (x,y) -> setPixel p (x,y) b) bitmap $ Set.toList coords
+
+fill (x,y) initial current bitmap = setAll (getAdjacentPositionsWithColor initial bitmap (x,y)) current bitmap
 
 -- fill (x,y) initial current bitmap = fill' (addCoord (x,y) bitmap Set.empty) initial current bitmap
 --   where 
