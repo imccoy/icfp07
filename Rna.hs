@@ -20,7 +20,7 @@ type RGB = (Component, Component, Component)
 type Transparency = Component
 type Pixel = (RGB, Transparency)
 
-type Bitmap = Array Coord (Array Coord Pixel)
+type Bitmap = Array Pos Pixel
 
 data Color = Col_RGB RGB | Col_Transparency Transparency
   deriving (Show)
@@ -58,9 +58,8 @@ strictDrawState ds@(a,b,c,d,e) = (seq ds a, seq ds b, seq ds c, seq ds d, seq ds
 
 canvasSize = 600
 
-transparentBitmap n = array (0, n-1) $ zip [0..n-1] (repeat transparentRow)
+transparentBitmap n = array ((0, n-1),(0,n-1)) $ zip [(x, y) | x <- [0..n-1], y <- [0..n-1]] (repeat transparentPixel)
   where transparentPixel = (black, transparent)
-        transparentRow =   array (0, n-1)  $ zip [0..n-1] (repeat transparentPixel)
 
 initialDrawState :: DrawState
 initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap canvasSize])
@@ -128,9 +127,13 @@ line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
                                  c = if deltax * deltay <= 0 then 1 else 0
                                  x = x0 * d + ((d - c) `div` 2)
                                  y = y0 * d + ((d - c) `div` 2)
+                                 addDeltaDivideD delta x = map (\a -> div a d) $ iterate ((+) delta) x
                                  xs = iterate ((+) deltax) x
                                  ys = iterate ((+) deltay) y
-                              in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) (setPixel p (x1,y1) b) $ take d (zip xs ys)
+                                 xs' = addDeltaDivideD deltax x
+                                 ys' = addDeltaDivideD deltay y
+                              --in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) (setPixel p (x1,y1) b) $ take d (zip xs ys)
+                              in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ (setPixel p (x1,y1) b) // zip (take d (zip xs' ys')) (repeat p)
 
 -- line :: Pixel -> Pos -> Pos -> Bitmap -> Bitmap
 -- line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
@@ -174,7 +177,8 @@ getAdjacentPositionsWithColor initial bitmap (x,y) = addCoord (x,y) Set.empty
           | getPixel pos bitmap == initial = getAdjacentPositionsWithColor' pos $! Set.insert pos coords
           | otherwise                      = coords
 
-setAll coords p bitmap = foldl' (\b (x,y) -> setPixel p (x,y) b) bitmap $ Set.toList coords
+--setAll coords p bitmap = foldl' (\b (x,y) -> setPixel p (x,y) b) bitmap $ Set.toList coords
+setAll coords p bitmap = bitmap // zip (Set.toList coords) (repeat p)
 
 fill (x,y) initial current bitmap = setAll (getAdjacentPositionsWithColor initial bitmap (x,y)) current bitmap
 
@@ -218,12 +222,10 @@ drawFill ds = tryFill (getPos ds) old new
         new = currentPixel $ getBucket ds
 
 setPixel :: Pixel -> Pos -> Bitmap -> Bitmap
-setPixel pixel (x,y) bitmap  = let row = bitmap ! x
-                                   newRow = row // [(y,pixel)]
-                                in bitmap // [(x,newRow)]
+setPixel pixel (x,y) bitmap  = bitmap // [((x,y),pixel)]
 
 getPixel :: Pos -> Bitmap -> Pixel
-getPixel (x, y) bitmap = (bitmap ! x) ! y
+getPixel (x, y) bitmap = bitmap ! (x,y)
 
 
 addBitmap bitmaps@(a1:a2:a3:a4:a5:a6:a7:a8:a9:a10:[]) = bitmaps
@@ -231,23 +233,21 @@ addBitmap bitmaps = (transparentBitmap canvasSize):bitmaps
 
 allPos s = zip [0..s] [0..s]
 
+mixArrays :: ((Pixel, Pixel) -> Pixel) -> Bitmap -> Bitmap -> Bitmap
+mixArrays f a b = listArray (bounds a) $ map f (zip (elems a) (elems b))
+
 compose (bm0:bm1:bitmaps) = (compose' bm0 bm1):bitmaps
-  where compose' bm0 bm1 = trace "composing" $ foldl' composePixel bm1 (allPos (canvasSizeFromArray bm1))
-        composePixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
-                                   ((r1, g1, b1), a1) = getPixel pos bm1
-                                   combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
-                                   pix = ((combine r0 r1, combine g0 g1, combine b0 b1), combine a0 a1)
-                                in setPixel pix pos bm1
+  where compose' bm0 bm1 = mixArrays composePixel bm0 bm1
+        composePixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = ((combine r0 r1, combine g0 g1, combine b0 b1), combine a0 a1)
+            where combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
 compose bitmaps = bitmaps
 
 
 clip (bm0:bm1:bitmaps) = (clip' bm0 bm1):bitmaps
-  where clip' bm0 bm1 = trace "clipping" $ foldl' clipPixel bm1 (allPos (canvasSizeFromArray bm1))
-        clipPixel bm1 pos = let ((r0, g0, b0), a0) = getPixel pos bm0
-                                ((r1, g1, b1), a1) = getPixel pos bm1
-                                fade c = c * a0 `div` 255
-                                pix = ((fade r1, fade g1, fade b1), fade a1)
-                             in setPixel pix pos bm1
+  where clip' bm0 bm1 = mixArrays clipPixel bm0 bm1
+        clipPixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = ((fade r1, fade g1, fade b1), fade a1)
+            where fade c = c * a0 `div` 255
+clip bitmaps = bitmaps
 
 applyRNA ::  [Base] -> DrawState -> DrawState
 applyRNA [P,I,P,I,I,I,C] = adjustBucket (addColor $ Col_RGB black)
@@ -290,10 +290,9 @@ drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
                            Nothing -> 
                              do render ds
 
-paintBitmap bitmap dc viewArea = mapM_ paintRow (assocs bitmap)
-  where paintPixel (r,g,b) x y = do Wx.set dc [Wx.penColor := Wx.colorRGB r g b]
-                                    Wx.drawPoint dc (Wx.pt x y) []
-        paintRow (x, row_array) = mapM_ (\(y, (rgb,a)) -> paintPixel rgb x y) (assocs row_array) 
+paintBitmap bitmap dc viewArea = mapM_ paintPixel (assocs bitmap)
+  where paintPixel ((x,y),((r,g,b),a)) = do Wx.set dc [Wx.penColor := Wx.colorRGB r g b]
+                                            Wx.drawPoint dc (Wx.pt x y) []
 
 makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
                        p <- Wx.panel f [Wx.on Wx.paint := paintBitmap bitmap]
