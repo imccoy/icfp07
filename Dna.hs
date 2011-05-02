@@ -19,7 +19,6 @@ data TItem = TItemBase Base | TItemRef Integer Integer | TItemLength Integer | T
   deriving (Show)
 
 mapFst f (a, b) = (f a, b)
---mapFstOfJust f v = maybe Nothing (Just (mapFst f)) v
 mapFstOfJust f v = maybe Nothing (\(a, r) -> Just (f a, r)) v
 
 nat :: DNA -> Maybe (Integer, DNA)
@@ -116,22 +115,18 @@ match dna = match' [] 0 [] dna
         match' (c0:ixs) i env dna' (PItemRParen:pat) = match' ixs i ((Seq.take (seq 0 $ fromInteger $ i - c0) $ Seq.drop (seq 0 $ fromInteger c0) dna):env) dna' pat
         match' ixs i env dna' []                     = Just (reverse env, dna')
 
-indexOfEnd q dna = maybe Nothing (\x -> Just (x + q_len)) (indexOfStart q 0)
+indexOfEnd q dna = maybe Nothing (\x -> Just (x + q_len)) (indexOfStart 0 (Fold.toList dna))
   where q_len = Seq.length q
         dna_len = Seq.length dna
-        indexOfStart q i 
-          | i + q_len > dna_len       = Nothing
-          | appearsHere q i           = Just i
-          | otherwise                 = indexOfStart q (i + 1)
-        --appearsHere q i = all (\j -> Seq.index dna (i + j) == Seq.index q j) [0..q_len-1]
-        appearsHere q i = appearsHere' q i 0
-        appearsHere' q i j
-          | j < q_len  = let here = (Seq.index dna (i+j) == Seq.index q j)
-                             later = appearsHere' q i (j+1)
-                          in seq here (here && later)
-                          -- in seq here ((&&) here $! later)
-                          -- in (&&) here $! later
-          | otherwise  = True
+        q_list = Fold.toList q
+        indexOfStart i dna_list
+          | i + q_len > dna_len         = Nothing
+          | appearsHere q_list dna_list = Just i
+          | otherwise                   = indexOfStart (i+1) $ tail dna_list
+        appearsHere [] dna = True
+        appearsHere (q:qs) (d:ds)
+           | q == d    = appearsHere qs ds
+           | otherwise = False
 
 protect 0 s = s
 protect n s = Fold.foldr (\item list -> (protectc n item) Seq.>< list) Seq.empty s

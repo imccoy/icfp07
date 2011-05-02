@@ -54,11 +54,11 @@ adjustMark    f (x, x1, m, x2, x3) = trace "adjustMark"       (x,   x1,  f m, x2
 adjustDir     f (x, x1, x2, d, x3) = trace "adjustDir"        (x,   x1,  x2,  f d, x3)
 adjustBitmaps f (x, x1, x2, x3, b) = trace "adjustBitmaps"    (x,   x1,  x2,  x3, f b)
 
-strictDrawState ds@(a,b,c,d,e) = (seq ds a, seq ds b, seq ds c, seq ds d, seq ds e)
+strictDrawState ds@(a,b,c,d,e) = a `seq` b `seq` c `seq` d `seq` e `seq` (a,b,c,d,e)
 
 canvasSize = 600
 
-transparentBitmap n = array ((0, n-1),(0,n-1)) $ zip [(x, y) | x <- [0..n-1], y <- [0..n-1]] (repeat transparentPixel)
+transparentBitmap n = array ((0, 0),(n-1,n-1)) $ zip [(x, y) | x <- [0..n-1], y <- [0..n-1]] (repeat transparentPixel)
   where transparentPixel = (black, transparent)
 
 initialDrawState :: DrawState
@@ -132,34 +132,8 @@ line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
                                  ys = iterate ((+) deltay) y
                                  xs' = addDeltaDivideD deltax x
                                  ys' = addDeltaDivideD deltay y
-                              --in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) (setPixel p (x1,y1) b) $ take d (zip xs ys)
-                              in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ (setPixel p (x1,y1) b) // zip (take d (zip xs' ys')) (repeat p)
-
--- line :: Pixel -> Pos -> Pos -> Bitmap -> Bitmap
--- line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
---                                  deltay = y1 - y0
---                                  d = max (abs deltax) (abs deltay)
---                                  c = if deltax * deltay <= 0 then 1 else 0
---                                  x = x0 * d + ((d - c) `div` 2)
---                                  y = y0 * d + ((d - c) `div` 2)
---                                  xs = iterate ((+) deltax) x
---                                  ys = iterate ((+) deltay) y
---                               in trace "lining" $ setPixel p (x1,y1) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) b $ take d (zip xs ys)
--- 
-
---fill (x,y) initial current bitmap = fill' [(x,y)] initial current bitmap
---  where fill' [] initial current bitmap = bitmap
---        fill' ((x,y):coords) initial current bitmap
---           | getPixel (x,y) bitmap == initial  = let drawnBitmap = setPixel current (x,y) bitmap
---                                                     newCoords = addCoord (x+1,y) $ addCoord (x-1,y) $ addCoord (x,y+1) $ addCoord (x,y-1) $ coords
---                                                  in fill' newCoords initial current drawnBitmap
---           | otherwise                         = bitmap
---        addCoord (-1,_) coords = coords
---        addCoord (_,-1) coords = coords
---        addCoord (600,_) coords = coords
---        addCoord (_,600) coords = coords
---        addCoord pos coords = pos:coords
-
+                                 xys' = take d $ zip xs' ys'
+                              in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ b // zip ((x1,y1):xys') (repeat p)
 
 drawLine :: DrawState -> (Bitmap -> Bitmap)
 drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
@@ -177,40 +151,9 @@ getAdjacentPositionsWithColor initial bitmap (x,y) = addCoord (x,y) Set.empty
           | getPixel pos bitmap == initial = getAdjacentPositionsWithColor' pos $! Set.insert pos coords
           | otherwise                      = coords
 
---setAll coords p bitmap = foldl' (\b (x,y) -> setPixel p (x,y) b) bitmap $ Set.toList coords
 setAll coords p bitmap = bitmap // zip (Set.toList coords) (repeat p)
 
 fill (x,y) initial current bitmap = setAll (getAdjacentPositionsWithColor initial bitmap (x,y)) current bitmap
-
--- fill (x,y) initial current bitmap = fill' (addCoord (x,y) bitmap Set.empty) initial current bitmap
---   where 
---         fill' coords initial current bitmap = if Set.null coords    then bitmap
---                                                                     else let   ((x,y),restCoords) = Set.deleteFindMin coords
---                                                                                drawnBitmap = setPixel current (x,y) bitmap
---                                                                                newCoords = addCoord (x+1,y) drawnBitmap $ addCoord (x-1,y) drawnBitmap $ addCoord (x,y+1) drawnBitmap $ addCoord (x,y-1) drawnBitmap $ restCoords
---                                                                             in fill' newCoords initial current drawnBitmap
---         addCoord (-1,_) _ coords = coords
---         addCoord (_,-1) _ coords = coords
---         addCoord (600,_) _ coords = coords
---         addCoord (_,600) _ coords = coords
---         addCoord pos bitmap coords
---           | getPixel pos bitmap == initial = Set.insert pos coords
---           | otherwise                      = coords
--- 
-
-
-
--- fill (x,y) initial current bitmap
---    | getPixel (x,y) bitmap  == initial = let setHere = setPixel current (x,y) bitmap
---                                              setLeft = if x > 0 then fill (x-1,y) initial current setHere else setHere
---                                              setRight = if x < 599 then fill (x+1,y) initial current setLeft else setLeft
---                                              setUp = if y > 0 then fill (x,y-1) initial current setRight else setRight
---                                              setDown = if y < 599 then fill (x,y+1) initial current setUp else setUp
---                                           in setUp
---    | otherwise                         = bitmap
--- 
-
-
 
 tryFill position initial current
   | initial /= current = trace ("filling" ++ (show initial) ++ (show current)) $ fill position initial current
