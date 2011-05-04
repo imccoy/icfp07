@@ -21,6 +21,7 @@ type Transparency = Component
 type Pixel = (RGB, Transparency)
 
 type Bitmap = Array Pos Pixel
+type Canvas = ([(Pos,Pos,Pixel)],Bitmap)
 
 data Color = Col_RGB RGB | Col_Transparency Transparency
   deriving (Show)
@@ -41,7 +42,7 @@ white    = (255, 255, 255)
 transparent = 0
 opaque      = 255
 
-type DrawState = (Bucket, Pos, Pos, Dir, [Bitmap])
+type DrawState = (Bucket, Pos, Pos, Dir, [Canvas])
 getBucket  (b, _, _, _, _) = b
 getPos     (_, p, _, _, _) = p
 getMark    (_, _, m, _, _) = m
@@ -58,7 +59,7 @@ strictDrawState ds@(a,b,c,d,e) = a `seq` b `seq` c `seq` d `seq` e `seq` (a,b,c,
 
 canvasSize = 600
 
-transparentBitmap n = array ((0, 0),(n-1,n-1)) $ zip [(x, y) | x <- [0..n-1], y <- [0..n-1]] (repeat transparentPixel)
+transparentBitmap n = ([], array ((0, 0),(n-1,n-1)) $ zip [(x, y) | x <- [0..n-1], y <- [0..n-1]] (repeat transparentPixel))
   where transparentPixel = (black, transparent)
 
 initialDrawState :: DrawState
@@ -117,25 +118,59 @@ turnClockwise E = S
 turnClockwise S = W
 turnClockwise W = N
 
-adjustTop :: (Bitmap -> Bitmap) -> [Bitmap] -> [Bitmap]
+adjustTop :: (Canvas -> Canvas) -> [Canvas] -> [Canvas]
 adjustTop f (x:xs) = (f x):xs
 
-line :: Pixel -> Pos -> Pos -> Bitmap -> Bitmap
-line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
-                                 deltay = y1 - y0
-                                 d = max (abs deltax) (abs deltay)
-                                 c = if deltax * deltay <= 0 then 1 else 0
-                                 x = x0 * d + ((d - c) `div` 2)
-                                 y = y0 * d + ((d - c) `div` 2)
-                                 addDeltaDivideD delta x = map (\a -> div a d) $ iterate ((+) delta) x
-                                 xs = iterate ((+) deltax) x
-                                 ys = iterate ((+) deltay) y
-                                 xs' = addDeltaDivideD deltax x
-                                 ys' = addDeltaDivideD deltay y
-                                 xys' = take d $ zip xs' ys'
-                              in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ b // zip ((x1,y1):xys') (repeat p)
+flatten [] = []
+flatten ([]:xss) = flatten xss
+flatten ((x:xs):xss) = x:(flatten (xs:xss))
 
-drawLine :: DrawState -> (Bitmap -> Bitmap)
+flattenCanvas :: Canvas -> Bitmap
+flattenCanvas (ls, b) = b // (flatten $ map settersFromLine ls)
+  where settersFromLine ((x0,y0), (x1,y1), p) = let deltax = x1 - x0
+                                                    deltay = y1 - y0
+                                                    d = max (abs deltax) (abs deltay)
+                                                    c = if deltax * deltay <= 0 then 1 else 0
+                                                    x = x0 * d + ((d - c) `div` 2)
+                                                    y = y0 * d + ((d - c) `div` 2)
+                                                    addDeltaDivideD delta x = map (\a -> div a d) $ iterate ((+) delta) x
+                                                    xs' = addDeltaDivideD deltax x
+                                                    ys' = addDeltaDivideD deltay y
+                                                    xys' = take d $ zip xs' ys'
+                                                 in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ zip ((x1,y1):xys') (repeat p)
+
+
+
+
+line :: Pixel -> Pos -> Pos -> Canvas -> Canvas
+line p start end (ls, bmp) = ((start, end, p):ls, bmp)
+
+-- line :: Pixel -> Pos -> Pos -> Bitmap -> Bitmap
+-- line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
+--                                  deltay = y1 - y0
+--                                  d = max (abs deltax) (abs deltay)
+--                                  c = if deltax * deltay <= 0 then 1 else 0
+--                                  x = x0 * d + ((d - c) `div` 2)
+--                                  y = y0 * d + ((d - c) `div` 2)
+--                                  xs = iterate ((+) deltax) x
+--                                  ys = iterate ((+) deltay) y
+--                               in trace "lining" $ setPixel p (x1,y1) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) b $ take d (zip xs ys)
+-- 
+
+--fill (x,y) initial current bitmap = fill' [(x,y)] initial current bitmap
+--  where fill' [] initial current bitmap = bitmap
+--        fill' ((x,y):coords) initial current bitmap
+--           | getPixel (x,y) bitmap == initial  = let drawnBitmap = setPixel current (x,y) bitmap
+--                                                     newCoords = addCoord (x+1,y) $ addCoord (x-1,y) $ addCoord (x,y+1) $ addCoord (x,y-1) $ coords
+--                                                  in fill' newCoords initial current drawnBitmap
+--           | otherwise                         = bitmap
+--        addCoord (-1,_) coords = coords
+--        addCoord (_,-1) coords = coords
+--        addCoord (600,_) coords = coords
+--        addCoord (_,600) coords = coords
+--        addCoord pos coords = pos:coords
+
+drawLine :: DrawState -> Canvas -> Canvas
 drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
 canvasSizeFromArray bitmap = snd (bounds bitmap)
@@ -159,9 +194,10 @@ tryFill position initial current
   | initial /= current = trace ("filling" ++ (show initial) ++ (show current)) $ fill position initial current
   | otherwise          = id
 
-drawFill :: DrawState -> Bitmap -> Bitmap
-drawFill ds = tryFill (getPos ds) old new 
-  where old = getPixel (getPos ds) (head $ getBitmaps ds)
+drawFill :: DrawState -> Canvas -> Canvas
+drawFill ds canvas = ([], drawFillBmp $ flattenCanvas canvas)
+  where drawFillBmp = tryFill (getPos ds) old new 
+        old = getPixel (getPos ds) (flattenCanvas $ head $ getBitmaps ds)
         new = currentPixel $ getBucket ds
 
 setPixel :: Pixel -> Pos -> Bitmap -> Bitmap
@@ -176,17 +212,20 @@ addBitmap bitmaps = (transparentBitmap canvasSize):bitmaps
 
 allPos s = zip [0..s] [0..s]
 
+canvasFromTwo :: Canvas -> Canvas -> (Bitmap -> Bitmap -> Bitmap) -> Canvas
+canvasFromTwo c1 c2 f = ([], f (flattenCanvas c1) (flattenCanvas c2))
+
 mixArrays :: ((Pixel, Pixel) -> Pixel) -> Bitmap -> Bitmap -> Bitmap
 mixArrays f a b = listArray (bounds a) $ map f (zip (elems a) (elems b))
 
-compose (bm0:bm1:bitmaps) = (compose' bm0 bm1):bitmaps
+compose (bm0:bm1:bitmaps) = (canvasFromTwo bm0 bm1 compose'):bitmaps
   where compose' bm0 bm1 = mixArrays composePixel bm0 bm1
         composePixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = ((combine r0 r1, combine g0 g1, combine b0 b1), combine a0 a1)
             where combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
 compose bitmaps = bitmaps
 
 
-clip (bm0:bm1:bitmaps) = (clip' bm0 bm1):bitmaps
+clip (bm0:bm1:bitmaps) = (canvasFromTwo bm0 bm1 clip'):bitmaps
   where clip' bm0 bm1 = mixArrays clipPixel bm0 bm1
         clipPixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = ((fade r1, fade g1, fade b1), fade a1)
             where fade c = c * a0 `div` 255
@@ -249,4 +288,4 @@ makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
 -- render ds = do --putStrLn $ show $ head $ getBitmaps ds
 --               exitWith ExitSuccess
 
-render ds = do Wx.start $ makeWindow (head $ getBitmaps ds)
+render ds = do Wx.start $ makeWindow (flattenCanvas $ head $ getBitmaps ds)
