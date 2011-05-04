@@ -175,16 +175,22 @@ drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
 canvasSizeFromArray bitmap = snd (bounds bitmap)
 
-getAdjacentPositionsWithColor initial bitmap (x,y) = addCoord (x,y) Set.empty
-  where getAdjacentPositionsWithColor' (x,y) coords = addCoord (x,y+1) $! addCoord (x,y-1) $! addCoord (x+1,y) $! addCoord (x-1,y) $! coords
-        addCoord (-1,_) coords = coords
+getAdjacentPositionsWithColor initial bitmap (x,y) = getAdjacentPositionsWithColor' (Set.empty, [(x,y)], Set.empty)
+  where addCoord (-1,_) coords = coords
         addCoord (_,-1) coords = coords
         addCoord (600,_) coords = coords
         addCoord (_,600) coords = coords
-        addCoord pos coords
-          | Set.member pos coords          = coords
-          | getPixel pos bitmap == initial = getAdjacentPositionsWithColor' pos $! Set.insert pos coords
-          | otherwise                      = coords
+        addCoord pos (queue, visited)
+          | Set.member pos visited = (queue, visited)
+          | otherwise              = (pos:queue, Set.insert pos visited)
+        getAdjacentPositionsWithColor' (coords, [], visited) = coords
+        getAdjacentPositionsWithColor' (coords, (pos@(x,y):queue), visited)
+          | getPixel pos bitmap == initial = let q1 = addCoord (x,y+1) (queue,visited)
+                                                 q2 = addCoord (x,y-1) q1
+                                                 q3 = addCoord (x+1,y) q2
+                                                 (queue4, visited4) = addCoord (x-1,y) q3
+                                              in getAdjacentPositionsWithColor' (Set.insert pos coords, queue4, visited4)
+          | otherwise                      =  getAdjacentPositionsWithColor' (coords, queue, visited)
 
 setAll coords p bitmap = bitmap // zip (Set.toList coords) (repeat p)
 
