@@ -224,7 +224,8 @@ addBitmap bitmaps = (transparentBitmap canvasSize):bitmaps
 allPos s = zip [0..s] [0..s]
 
 canvasFromTwo :: Canvas -> Canvas -> (Bitmap -> Bitmap -> Bitmap) -> Canvas
-canvasFromTwo c1 c2 f = ([], f (flattenCanvas c1) (flattenCanvas c2))
+canvasFromTwo c1 c2 f = c' `seq` ([], c')
+  where c' = f (flattenCanvas c1) (flattenCanvas c2)
 
 mixArrays :: ((Pixel, Pixel) -> Pixel) -> Bitmap -> Bitmap -> Bitmap
 mixArrays f a b = listArray (bounds a) $ map f (zip (elems a) (elems b))
@@ -282,7 +283,7 @@ drawRna' n rnapipe currentBitmap ds = do rnaMsg <- readChan rnapipe
                                          when (0 == n `mod` 1000) $ do writeIORef currentBitmap (flattenCanvas $ head $ getBitmaps ds)
                                                                        putStrLn ("RNA iteration " ++ (show n))
                                          case rnaMsg of
-                                           Just rna -> drawRna' (n+1) rnapipe currentBitmap $! strictDrawState $! applyRNAt (toList $ rna) ds
+                                           Just rna -> drawRna' (n+1) rnapipe currentBitmap $! strictDrawState $ applyRNAt (toList $ rna) ds
                                            Nothing -> writeIORef currentBitmap (flattenCanvas $ head $ getBitmaps ds)
                                                      
 
