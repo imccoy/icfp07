@@ -124,7 +124,8 @@ turnClockwise S = W
 turnClockwise W = N
 
 adjustTop :: (Canvas -> Canvas) -> [Canvas] -> [Canvas]
-adjustTop f (x:xs) = (f x):xs
+adjustTop f (x:xs) = let x' = f x 
+                      in x' `seq` (x':xs)
 
 flatten [] = []
 flatten ([]:xss) = flatten xss
