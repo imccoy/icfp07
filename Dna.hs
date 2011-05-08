@@ -11,7 +11,6 @@ import System.Exit
 import Debug.Trace
 import Data.MemoTrie
 import Data.List (foldl')
-import Control.Monad
 
 
 data PItem = PItemBase Base | PItemSkip Integer | PItemQuery DNA | PItemLParen | PItemRParen | PItemRNA RNA
@@ -125,7 +124,6 @@ indexOfEnd q dna = maybe Nothing (\x -> Just (x + q_len)) (indexOfStart 0 (Fold.
           | appearsHere q_list dna_list = Just i
           | otherwise                   = indexOfStart (i+1) $ tail dna_list
         appearsHere [] dna = True
-        appearsHere _  []  = False
         appearsHere (q:qs) (d:ds)
            | q == d    = appearsHere qs ds
            | otherwise = False
@@ -204,9 +202,8 @@ sample3data = Seq.fromList [I,I,P,I,P,I,I,C,P,I,I,C,I,I,C,C,I,I,C,F,C,F,C]
 -- sample2 = executeIteration $ sample2data -- should be PIICFCFFPC
 -- sample3 = executeIteration $ sample3data -- should be I
 
-execute :: Integer -> Chan (Maybe RNA) -> DNA -> IO ()
-execute n rnapipe dna = do dna' <- executeIteration rnapipe dna
-                           when (0 == n `mod` 100) $ putStrLn ("DNA iteration " ++ (show n))
-                           execute (n + 1) rnapipe dna'
+execute :: Chan (Maybe RNA) -> DNA -> IO ()
+execute rnapipe dna = do dna' <- executeIteration rnapipe dna
+                         execute rnapipe dna'
 
 

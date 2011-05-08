@@ -8,11 +8,6 @@ import Data.List (foldl')
 import qualified Data.Set as Set
 import System.Exit
 import Debug.Trace
-import Control.Monad
-import Control.Concurrent.MVar
-import Data.IORef
-import Control.Concurrent (forkIO, killThread, myThreadId)
-import Data.Maybe
 
 import qualified Graphics.UI.WX as Wx
 import Graphics.UI.WX.Attributes (Prop ((:=)))
@@ -54,11 +49,11 @@ getMark    (_, _, m, _, _) = m
 getDir     (_, _, _, d, _) = d
 getBitmaps (_, _, _, _, b) = b
 
-adjustBucket  f (b, x, x1, x2, x3) = (f b, x,   x1,  x2,  x3)
-adjustPos     f (x, p, x1, x2, x3) = (x,   f p, x1,  x2,  x3)
-adjustMark    f (x, x1, m, x2, x3) = (x,   x1,  f m, x2,  x3)
-adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
-adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
+adjustBucket  f (b, x, x1, x2, x3) = trace "adjustBucket"     (f b, x,   x1,  x2,  x3)
+adjustPos     f (x, p, x1, x2, x3) = trace "adjustPos"        (x,   f p, x1,  x2,  x3)
+adjustMark    f (x, x1, m, x2, x3) = trace "adjustMark"       (x,   x1,  f m, x2,  x3)
+adjustDir     f (x, x1, x2, d, x3) = trace "adjustDir"        (x,   x1,  x2,  f d, x3)
+adjustBitmaps f (x, x1, x2, x3, b) = trace "adjustBitmaps"    (x,   x1,  x2,  x3, f b)
 
 strictDrawState ds@(a,b,c,d,e) = a `seq` b `seq` c `seq` d `seq` e `seq` (a,b,c,d,e)
 
@@ -71,7 +66,7 @@ initialDrawState :: DrawState
 initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap canvasSize])
 
 addColor :: Color -> Bucket -> Bucket
-addColor = (:)
+addColor = trace "adding color" (:)
 
 currentPixel :: Bucket -> Pixel
 currentPixel bucket = ((r * a `div` 255, g * a `div` 255, b * a `div` 255), a)
@@ -143,7 +138,7 @@ flattenCanvas (ls, b) = b // (flatten $ map settersFromLine ls)
                                                     xs' = addDeltaDivideD deltax x
                                                     ys' = addDeltaDivideD deltay y
                                                     xys' = take d $ zip xs' ys'
-                                                 in zip ((x1,y1):xys') (repeat p)
+                                                 in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ zip ((x1,y1):xys') (repeat p)
 
 
 
@@ -181,28 +176,29 @@ drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
 
 canvasSizeFromArray bitmap = snd (bounds bitmap)
 
-getAdjacentPositionsWithColor initial bitmap (x,y) = getAdjacentPositionsWithColor' bitmap initial (Set.empty, [(x,y)], Set.empty)
-
-addCoord (-1,_) coords = coords
-addCoord (_,-1) coords = coords
-addCoord (600,_) coords = coords
-addCoord (_,600) coords = coords
-addCoord pos (queue, visited)
-  | Set.member pos visited = (queue, visited)
-  | otherwise              = (pos:queue, Set.insert pos visited)
-
-getAdjacentPositionsWithColor' bitmap initial (coords, [], visited) = coords
-getAdjacentPositionsWithColor' bitmap initial (coords, (pos@(x,y):queue), visited)
-  | getPixel pos bitmap == initial = let (q', v') = addCoord (x,y+1) $ addCoord (x,y-1) $ addCoord (x+1,y) $ addCoord (x-1,y) (queue, visited)
-                                      in getAdjacentPositionsWithColor'  bitmap initial (Set.insert pos coords, q', v')
-  | otherwise                      =  getAdjacentPositionsWithColor' bitmap initial (coords, queue, visited)
+getAdjacentPositionsWithColor initial bitmap (x,y) = getAdjacentPositionsWithColor' (Set.empty, [(x,y)], Set.empty)
+  where addCoord (-1,_) coords = coords
+        addCoord (_,-1) coords = coords
+        addCoord (600,_) coords = coords
+        addCoord (_,600) coords = coords
+        addCoord pos (queue, visited)
+          | Set.member pos visited = (queue, visited)
+          | otherwise              = (pos:queue, Set.insert pos visited)
+        getAdjacentPositionsWithColor' (coords, [], visited) = coords
+        getAdjacentPositionsWithColor' (coords, (pos@(x,y):queue), visited)
+          | getPixel pos bitmap == initial = let q1 = addCoord (x,y+1) (queue,visited)
+                                                 q2 = addCoord (x,y-1) q1
+                                                 q3 = addCoord (x+1,y) q2
+                                                 (queue4, visited4) = addCoord (x-1,y) q3
+                                              in getAdjacentPositionsWithColor' (Set.insert pos coords, queue4, visited4)
+          | otherwise                      =  getAdjacentPositionsWithColor' (coords, queue, visited)
 
 setAll coords p bitmap = bitmap // zip (Set.toList coords) (repeat p)
 
 fill (x,y) initial current bitmap = setAll (getAdjacentPositionsWithColor initial bitmap (x,y)) current bitmap
 
 tryFill position initial current
-  | initial /= current = fill position initial current
+  | initial /= current = trace ("filling" ++ (show initial) ++ (show current)) $ fill position initial current
   | otherwise          = id
 
 drawFill :: DrawState -> Canvas -> Canvas
@@ -257,8 +253,8 @@ applyRNA [P,I,P,I,I,P,P] = adjustBucket (addColor $ Col_Transparency opaque)
 applyRNA [P,I,I,P,I,C,P] = adjustBucket (\_ -> [])
 
 applyRNA [P,I,I,I,I,I,P] = (\ds -> adjustPos (move $ getDir ds) ds)
-applyRNA [P,C,C,C,C,C,P] = adjustDir $ turnCounterClockwise
-applyRNA [P,F,F,F,F,F,P] = adjustDir $ turnClockwise
+applyRNA [P,C,C,C,C,C,P] = adjustDir $ trace "turning counterclockwise" turnCounterClockwise
+applyRNA [P,F,F,F,F,F,P] = adjustDir $ trace "turning clockwise" turnClockwise
 
 applyRNA [P,C,C,I,F,F,P] = (\ds -> adjustMark (\_ -> getPos ds) ds)
 applyRNA [P,F,F,I,C,C,P] = (\ds -> adjustBitmaps (adjustTop $ drawLine ds) ds)
@@ -272,33 +268,22 @@ applyRNA _               = id
 
 drawRna :: Chan (Maybe RNA) -> IO ()
 drawRna rnapipe = do let ds = initialDrawState
-                     currentBitmap <- newIORef $ flattenCanvas $ transparentBitmap 600
-                     forkIO $ render currentBitmap
-                     drawRna' 0 rnapipe currentBitmap ds
+                     drawRna' rnapipe ds
 
-applyRNAt rna ds = applyRNA rna $! strictDrawState ds
+applyRNAt rna ds = trace ("applying " ++ show rna) $ applyRNA rna $! strictDrawState ds
 
-drawRna' :: Int -> Chan (Maybe RNA) -> IORef Bitmap -> DrawState -> IO ()
-drawRna' n rnapipe currentBitmap ds = do rnaMsg <- readChan rnapipe
-                                         when (0 == n `mod` 1000) $ do writeIORef currentBitmap (flattenCanvas $ head $ getBitmaps ds)
-                                                                       putStrLn ("RNA iteration " ++ (show n))
-                                         case rnaMsg of
-                                           Just rna -> drawRna' (n+1) rnapipe currentBitmap $! strictDrawState $ applyRNAt (toList $ rna) ds
-                                           Nothing -> writeIORef currentBitmap (flattenCanvas $ head $ getBitmaps ds)
-                                                     
+drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
+                         case rnaMsg of
+                           Just rna -> drawRna' rnapipe $! strictDrawState $ applyRNAt (toList rna) ds
+                           Nothing -> render ds
 
-paintBitmap bitmap dc viewArea = do b <- readIORef bitmap
-                                    mapM_ paintPixel (assocs b)
+paintBitmap bitmap dc viewArea = mapM_ paintPixel (assocs bitmap)
   where paintPixel ((x,y),((r,g,b),a)) = do Wx.set dc [Wx.penColor := Wx.colorRGB r g b]
                                             Wx.drawPoint dc (Wx.pt x y) []
 
-makeWindow :: IORef Bitmap -> IO ()
-makeWindow rnaBitmap = do 
-                          f <- Wx.frameFixed [Wx.text := "Endo"]
-                          p <- Wx.panel f [Wx.on Wx.paint := paintBitmap rnaBitmap]
-                          t <- Wx.timer f [Wx.interval := 1000,
-                                           Wx.on Wx.command := Wx.refresh p]
-                          Wx.set f [Wx.layout := Wx.minsize (Wx.sz canvasSize canvasSize) $ Wx.widget p]
+makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
+                       p <- Wx.panel f [Wx.on Wx.paint := paintBitmap bitmap]
+                       Wx.set f [Wx.layout := Wx.minsize (Wx.sz canvasSize canvasSize) $ Wx.widget p]
 
 -- drawRna' ds rnapipe = do rnaMsg <- readChan rnapipe
 --                          putStrLn $ show rnaMsg
@@ -308,4 +293,4 @@ makeWindow rnaBitmap = do
 -- render ds = do --putStrLn $ show $ head $ getBitmaps ds
 --               exitWith ExitSuccess
 
-render rnaBitmap = do Wx.start $ makeWindow rnaBitmap
+render ds = do Wx.start $ makeWindow (flattenCanvas $ head $ getBitmaps ds)
