@@ -8,5 +8,5 @@ main :: IO ()
 main = do contents <- readFile "/Users/iain/icfp/icfp2007/endo.dna"
           let dna = toDna contents
           rnapipe <- newChan
-          forkIO $ execute rnapipe dna
+          forkIO $ execute 0 rnapipe dna
           drawRna rnapipe
