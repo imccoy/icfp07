@@ -1,4 +1,4 @@
-module Rna (drawRna, Bitmap) where
+module Rna (drawRna, Bitmap, explode, transparentBitmap) where
 
 import Endo
 import Control.Concurrent.Chan
@@ -49,11 +49,13 @@ getMark    (_, _, m, _, _) = m
 getDir     (_, _, _, d, _) = d
 getBitmaps (_, _, _, _, b) = b
 
-adjustBucket  f (b, x, x1, x2, x3) = trace "adjustBucket"     (f b, x,   x1,  x2,  x3)
-adjustPos     f (x, p, x1, x2, x3) = trace "adjustPos"        (x,   f p, x1,  x2,  x3)
-adjustMark    f (x, x1, m, x2, x3) = trace "adjustMark"       (x,   x1,  f m, x2,  x3)
-adjustDir     f (x, x1, x2, d, x3) = trace "adjustDir"        (x,   x1,  x2,  f d, x3)
-adjustBitmaps f (x, x1, x2, x3, b) = trace "adjustBitmaps"    (x,   x1,  x2,  x3, f b)
+adjustBucket  f (b, x, x1, x2, x3) = (f b, x,   x1,  x2,  x3)
+adjustPos     f (x, p, x1, x2, x3) = (x,   f p, x1,  x2,  x3)
+adjustMark    f (x, x1, m, x2, x3) = (x,   x1,  f m, x2,  x3)
+adjustDir     f (x, x1, x2, d, x3) = (x,   x1,  x2,  f d, x3)
+adjustBitmaps f (x, x1, x2, x3, b) = (x,   x1,  x2,  x3, f b)
+adjustBitmapsS f (x, x1, x2, x3, b) = b' `seq` (x,   x1,  x2,  x3, b')
+  where b' = f b
 
 strictDrawState ds@(a,b,c,d,e) = a `seq` b `seq` c `seq` d `seq` e `seq` (a,b,c,d,e)
 
@@ -66,7 +68,7 @@ initialDrawState :: DrawState
 initialDrawState = ([], (0, 0), (0, 0), E, [transparentBitmap canvasSize])
 
 addColor :: Color -> Bucket -> Bucket
-addColor = trace "adding color" (:)
+addColor = (:)
 
 currentPixel :: Bucket -> Pixel
 currentPixel bucket = ((r * a `div` 255, g * a `div` 255, b * a `div` 255), a)
@@ -138,38 +140,13 @@ flattenCanvas (ls, b) = b // (flatten $ map settersFromLine ls)
                                                     xs' = addDeltaDivideD deltax x
                                                     ys' = addDeltaDivideD deltay y
                                                     xys' = take d $ zip xs' ys'
-                                                 in trace ("lining" ++ (show (x0,y0)) ++ (show (x1,y1))) $ zip ((x1,y1):xys') (repeat p)
+                                                 in zip ((x1,y1):xys') (repeat p)
 
 
 
 
 line :: Pixel -> Pos -> Pos -> Canvas -> Canvas
 line p start end (ls, bmp) = ((start, end, p):ls, bmp)
-
--- line :: Pixel -> Pos -> Pos -> Bitmap -> Bitmap
--- line p (x0, y0) (x1, y1) b = let deltax = x1 - x0
---                                  deltay = y1 - y0
---                                  d = max (abs deltax) (abs deltay)
---                                  c = if deltax * deltay <= 0 then 1 else 0
---                                  x = x0 * d + ((d - c) `div` 2)
---                                  y = y0 * d + ((d - c) `div` 2)
---                                  xs = iterate ((+) deltax) x
---                                  ys = iterate ((+) deltay) y
---                               in trace "lining" $ setPixel p (x1,y1) $ foldl' (\pix (x,y) -> setPixel p (x `div` d, y `div` d) pix) b $ take d (zip xs ys)
--- 
-
---fill (x,y) initial current bitmap = fill' [(x,y)] initial current bitmap
---  where fill' [] initial current bitmap = bitmap
---        fill' ((x,y):coords) initial current bitmap
---           | getPixel (x,y) bitmap == initial  = let drawnBitmap = setPixel current (x,y) bitmap
---                                                     newCoords = addCoord (x+1,y) $ addCoord (x-1,y) $ addCoord (x,y+1) $ addCoord (x,y-1) $ coords
---                                                  in fill' newCoords initial current drawnBitmap
---           | otherwise                         = bitmap
---        addCoord (-1,_) coords = coords
---        addCoord (_,-1) coords = coords
---        addCoord (600,_) coords = coords
---        addCoord (_,600) coords = coords
---        addCoord pos coords = pos:coords
 
 drawLine :: DrawState -> Canvas -> Canvas
 drawLine ds = line (currentPixel $ getBucket ds) (getPos ds) (getMark ds)
@@ -198,14 +175,15 @@ setAll coords p bitmap = bitmap // zip (Set.toList coords) (repeat p)
 fill (x,y) initial current bitmap = setAll (getAdjacentPositionsWithColor initial bitmap (x,y)) current bitmap
 
 tryFill position initial current
-  | initial /= current = trace ("filling" ++ (show initial) ++ (show current)) $ fill position initial current
+  | initial /= current = fill position initial current
   | otherwise          = id
 
 drawFill :: DrawState -> Canvas -> Canvas
-drawFill ds canvas = ([], drawFillBmp $ flattenCanvas canvas)
-  where drawFillBmp = tryFill (getPos ds) old new 
-        old = getPixel (getPos ds) (flattenCanvas $ head $ getBitmaps ds)
+drawFill ds canvas = newCanvas `seq` ([], newCanvas)
+  where old = getPixel (getPos ds) (flattenCanvas $ head $ getBitmaps ds)
         new = currentPixel $ getBucket ds
+	drawFillBmp = tryFill (getPos ds) old new
+        newCanvas = drawFillBmp $ flattenCanvas canvas
 
 setPixel :: Pixel -> Pos -> Bitmap -> Bitmap
 setPixel pixel (x,y) bitmap  = bitmap // [((x,y),pixel)]
@@ -224,19 +202,36 @@ canvasFromTwo c1 c2 f = c' `seq` ([], c')
   where c' = f (flattenCanvas c1) (flattenCanvas c2)
 
 mixArrays :: ((Pixel, Pixel) -> Pixel) -> Bitmap -> Bitmap -> Bitmap
-mixArrays f a b = listArray (bounds a) $ map f (zip (elems a) (elems b))
+mixArrays f a b = let es = forceMap f (zip (elems a) (elems b))
+                   in es `seq` listArray (bounds a) $ es
 
-compose (bm0:bm1:bitmaps) = (canvasFromTwo bm0 bm1 compose'):bitmaps
+forceMap :: (a -> b) -> [a] -> [b]
+forceMap f [] = []
+forceMap f (a:as) = let a' = f a
+                     in a' `seq` a':(forceMap f as)
+
+
+compose (bm0:bm1:bitmaps) = newCanvas `seq` newCanvas:bitmaps
   where compose' bm0 bm1 = mixArrays composePixel bm0 bm1
-        composePixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = ((combine r0 r1, combine g0 g1, combine b0 b1), combine a0 a1)
+        composePixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = r' `seq` g' `seq` b' `seq` a' `seq`  ((r', g', b'), a')
             where combine n0 n1 = n0 + n1 * (255 - a0) `div` 255
+                  r' = combine r0 r1
+                  g' = combine g0 g1
+                  b' = combine b0 b1
+                  a' = combine a0 a1
+        newCanvas = canvasFromTwo bm0 bm1 compose'
 compose bitmaps = bitmaps
 
 
-clip (bm0:bm1:bitmaps) = (canvasFromTwo bm0 bm1 clip'):bitmaps
+clip (bm0:bm1:bitmaps) = newCanvas `seq` newCanvas:bitmaps
   where clip' bm0 bm1 = mixArrays clipPixel bm0 bm1
-        clipPixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = ((fade r1, fade g1, fade b1), fade a1)
+        clipPixel (((r0,g0,b0),a0),((r1,g1,b1),a1)) = r' `seq` g' `seq` b' `seq` a' `seq`  ((r', g', b'), a')
             where fade c = c * a0 `div` 255
+                  r' = fade r1
+                  g' = fade g1
+                  b' = fade b1
+                  a' = fade a1
+        newCanvas = canvasFromTwo bm0 bm1 clip'
 clip bitmaps = bitmaps
 
 applyRNA ::  [Base] -> DrawState -> DrawState
@@ -253,15 +248,15 @@ applyRNA [P,I,P,I,I,P,P] = adjustBucket (addColor $ Col_Transparency opaque)
 applyRNA [P,I,I,P,I,C,P] = adjustBucket (\_ -> [])
 
 applyRNA [P,I,I,I,I,I,P] = (\ds -> adjustPos (move $ getDir ds) ds)
-applyRNA [P,C,C,C,C,C,P] = adjustDir $ trace "turning counterclockwise" turnCounterClockwise
-applyRNA [P,F,F,F,F,F,P] = adjustDir $ trace "turning clockwise" turnClockwise
+applyRNA [P,C,C,C,C,C,P] = adjustDir turnCounterClockwise
+applyRNA [P,F,F,F,F,F,P] = adjustDir turnClockwise
 
 applyRNA [P,C,C,I,F,F,P] = (\ds -> adjustMark (\_ -> getPos ds) ds)
-applyRNA [P,F,F,I,C,C,P] = (\ds -> adjustBitmaps (adjustTop $ drawLine ds) ds)
-applyRNA [P,I,I,P,I,I,P] = (\ds -> adjustBitmaps (adjustTop $ drawFill ds) ds)
+applyRNA [P,F,F,I,C,C,P] = (\ds -> adjustBitmapsS (adjustTop $ drawLine ds) ds)
+applyRNA [P,I,I,P,I,I,P] = (\ds -> adjustBitmapsS (adjustTop $ drawFill ds) ds)
 
 applyRNA [P,C,C,P,F,F,P] = adjustBitmaps addBitmap
-applyRNA [P,F,F,P,C,C,P] = adjustBitmaps compose
+applyRNA [P,F,F,P,C,C,P] = adjustBitmapsS compose
 applyRNA [P,F,F,I,C,C,F] = adjustBitmaps clip
 
 applyRNA _               = id
@@ -270,11 +265,9 @@ drawRna :: Chan (Maybe RNA) -> IO ()
 drawRna rnapipe = do let ds = initialDrawState
                      drawRna' rnapipe ds
 
-applyRNAt rna ds = trace ("applying " ++ show rna) $ applyRNA rna $! strictDrawState ds
-
 drawRna' rnapipe ds = do rnaMsg <- readChan rnapipe
                          case rnaMsg of
-                           Just rna -> drawRna' rnapipe $! strictDrawState $ applyRNAt (toList rna) ds
+                           Just rna -> drawRna' rnapipe $! strictDrawState $ applyRNA (toList rna) ds
                            Nothing -> render ds
 
 paintBitmap bitmap dc viewArea = mapM_ paintPixel (assocs bitmap)
@@ -294,3 +287,4 @@ makeWindow bitmap = do f <- Wx.frameFixed [Wx.text := "Endo"]
 --               exitWith ExitSuccess
 
 render ds = do Wx.start $ makeWindow (flattenCanvas $ head $ getBitmaps ds)
+
